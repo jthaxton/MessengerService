@@ -12,7 +12,8 @@ import (
 )
 
 type Handler struct {
-	SocketStore map[string]*Socket
+	SocketStore *map[string]*Socket
+	AuthEndpoint string
 }
 
 type MessageType string
@@ -23,7 +24,7 @@ const (
 	InstantMessageError MessageType = "INSTANT_MESSAGE_ERROR"
 )
 
-const AUTH_ENDPOINT = "http://localhost:3000"
+// const AUTH_ENDPOINT = os.Getenv("RAILS_APP") //|| "http://localhost:3000"
 
 type Message struct {
 	Type    MessageType				`json:"data_object_type"`
@@ -37,9 +38,9 @@ type AuthResponse struct {
 	Email   string      `json:"email"`
 }
 
-func Authenticate(ctx *gin.Context) (*AuthResponse, error) {
+func (handler *Handler) Authenticate(ctx *gin.Context) (*AuthResponse, error) {
 	client := &http.Client{}
-	req, err := http.NewRequest("GET", AUTH_ENDPOINT + "/sessions/get_token", nil)
+	req, err := http.NewRequest("GET", handler.AuthEndpoint + "/sessions/get_token", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -56,11 +57,12 @@ func Authenticate(ctx *gin.Context) (*AuthResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+	// fmt.Println("authRes")
+	// fmt.Println(authRes)
 
 	if res.StatusCode != 200 {
 		return nil, errors.New("Unauthenticated")
 	}
-
 	return &authRes, nil
 }
 
@@ -74,8 +76,15 @@ func (handler *Handler) HandleConnect(ctx *gin.Context) {
 		},
 	}
 
-	res, err := Authenticate(ctx)
+	res, err := handler.Authenticate(ctx)
+	fmt.Println("KEYS 1")
+	keys := make([]string, len(*handler.SocketStore))
 
+i := 0
+for k := range *handler.SocketStore {
+	keys[i] = k
+	i++
+}
 	if err != nil {
 		fmt.Println(err.Error())
 		return
@@ -94,7 +103,8 @@ func (handler *Handler) HandleConnect(ctx *gin.Context) {
 			fmt.Println(err.Error())
 			break
 		}
-		handler.SocketStore[res.Email] = &Socket{Socket: ws, Kind: mt}
+		store := *handler.SocketStore
+		store[res.Email] = &Socket{Socket: ws, Kind: mt}
 		_, err = unmarshal(message, &messageObj)
 
 		if err != nil {
@@ -103,8 +113,19 @@ func (handler *Handler) HandleConnect(ctx *gin.Context) {
 
 		//Response message to client
 		toEmail := messageObj.SentTo
-		sockets := handler.SocketStore
+		sockets := store
 		socket := sockets[toEmail]
+		fmt.Println("socket == nil")
+		fmt.Println(socket == nil)
+		fmt.Println("KEYS 2")
+			keys := make([]string, len(*handler.SocketStore))
+
+	i := 0
+	for k := range *handler.SocketStore {
+			keys[i] = k
+			i++
+	}
+	fmt.Println(keys)
 		if socket != nil {
 			err = socket.Socket.WriteMessage(mt, message)
 			if err != nil {
@@ -117,7 +138,7 @@ func (handler *Handler) HandleConnect(ctx *gin.Context) {
 
 func (handler *Handler) HandleDisconnect(ctx *gin.Context) {
 	email := ctx.Request.URL.Query()["email"][0]
-	delete(handler.SocketStore, email)
+	delete(*handler.SocketStore, email)
 	ctx.JSON(200, make(map[string]string))
 }
 
@@ -129,10 +150,8 @@ func (handler *Handler) HandleSendMessage(ctx *gin.Context) {
 		fmt.Println(err.Error())
 	}
 	toEmail := messageObj.SentTo
-	sockets := handler.SocketStore
+	sockets := *handler.SocketStore
 	socket := sockets[toEmail]
-	fmt.Println("toEmail")
-	fmt.Println(toEmail)
 
 	// *********************************
 	// * TODO validate messageObj here.*
@@ -143,19 +162,17 @@ func (handler *Handler) HandleSendMessage(ctx *gin.Context) {
 	if err != nil {
 		fmt.Println(err.Error())
 	}
-	fmt.Println("GOT HERE 11111")
 
-	keys := make([]string, len(handler.SocketStore))
+	// keys := make([]string, len(handler.SocketStore))
 
-	i := 0
-	for k := range handler.SocketStore {
-			keys[i] = k
-			i++
-	}
-	fmt.Println(keys)
+	// i := 0
+	// for k := range handler.SocketStore {
+	// 		keys[i] = k
+	// 		i++
+	// }
+	// fmt.Println(keys)
 
 	if socket != nil {
-		fmt.Println(message)
 		err = socket.Socket.WriteMessage(socket.Kind, message)
 		if err != nil {
 			fmt.Println(err.Error())
