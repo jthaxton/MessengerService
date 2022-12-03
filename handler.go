@@ -8,37 +8,33 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
-	// "log"
 	"errors"
 )
 
 type Handler struct {
-	SocketStore *SocketStore
+	SocketStore map[string]*Socket
 }
 
 type MessageType string
 
 const (
-	InstantMessage MessageType = "INSTANT_MESSAGE"
-	Notification MessageType = "NOTIFICATION"
+	Conversation MessageType =      "Conversation"
+	Notification MessageType =        "NOTIFICATION"
 	InstantMessageError MessageType = "INSTANT_MESSAGE_ERROR"
 )
 
 const AUTH_ENDPOINT = "http://localhost:3000"
 
 type Message struct {
-	Type    MessageType `json:"type"`
-	Content string `json:"content"`
-	SentBy  string `json:"sent_by"`
-	SentTo  string `json:"sent_to"`
+	Type    MessageType				`json:"data_object_type"`
+	Content string      			`json:"content"`
+	SentBy  string						`json:"sent_by"`
+	SentTo  string      			`json:"sent_to"`
+	DataObjectId  string      `json:"data_object_id"`
 }
 
 type AuthResponse struct {
 	Email   string      `json:"email"`
-}
-
-func (handler *Handler) HandlePing(ctx *gin.Context) {
-	ctx.JSON(200, map[string]string{"test": "pong"})
 }
 
 func Authenticate(ctx *gin.Context) (*AuthResponse, error) {
@@ -47,27 +43,23 @@ func Authenticate(ctx *gin.Context) (*AuthResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	token := ctx.Request.URL.Query()["token"]
 	req.Header.Set("Authorization", token[0])
 	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
+
 	authRes := AuthResponse{}
 	err = json.NewDecoder(res.Body).Decode(&authRes)
-	// marsh, err := marshal(res.Body)
 	if err != nil {
 		return nil, err
 	}
-	// _, err = unmarshal(marsh, &authRes)
-	// if err != nil {
-	// 	return nil, err
-	// }
 
 	if res.StatusCode != 200 {
 		return nil, errors.New("Unauthenticated")
 	}
-
 
 	return &authRes, nil
 }
@@ -83,65 +75,90 @@ func (handler *Handler) HandleConnect(ctx *gin.Context) {
 	}
 
 	res, err := Authenticate(ctx)
-	fmt.Println("RES")
-	fmt.Println(res)
+
 	if err != nil {
-		fmt.Println(err)
-		// ctx.JSON(402, map[string]string{"auth": err.Error()})
+		fmt.Println(err.Error())
 		return
 	}
 	ws, err := upgrader.Upgrade(ctx.Writer, ctx.Request, nil)
 	if err != nil {
-		fmt.Println(err)
-		// ctx.JSON(500, map[string]string{"ws": err.Error()})
+		fmt.Println(err.Error())
 	}
-	handler.SocketStore.UnsafeAddToStore(res.Email, ws)
 	defer ws.Close()
-
+	
 	var messageObj Message
 	for {
-		//Read Message from client
-
 		mt, message, err := ws.ReadMessage()
+
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println(err.Error())
 			break
 		}
-
+		handler.SocketStore[res.Email] = &Socket{Socket: ws, Kind: mt}
 		_, err = unmarshal(message, &messageObj)
-		fmt.Println(" UNMARSHAlED")
 
 		if err != nil {
-			fmt.Println(err)
-			// m, err := marshal(Message{Type: InstantMessageError})
-			// if err != nil {
-			// 	fmt.Println(" UNMARSHAl err")
-
-			// } else {
-			// 	fmt.Println("WRITING MESSAGE AFTER UNMARSHAl")
-			// 	ws.WriteMessage(mt, m)
-			// }
+			fmt.Println(err.Error())
 		}
-		//If client message is ping will return pong
-		// if string(message) == "ping" {
-		// 	message = []byte("pong")
-		// }
+
 		//Response message to client
 		toEmail := messageObj.SentTo
-		socket := handler.SocketStore.Sockets[toEmail]
-		fmt.Println("socket " + toEmail)
-		fmt.Println(socket == nil)
-		for k := range handler.SocketStore.Sockets {
-			fmt.Println(k)
-			// i++
-	}
+		sockets := handler.SocketStore
+		socket := sockets[toEmail]
 		if socket != nil {
-			fmt.Println("WRITING MESSAGE")
-			err = socket.WriteMessage(mt, message)
+			err = socket.Socket.WriteMessage(mt, message)
 			if err != nil {
-				// ctx.JSON(500, map[string]string{"ws": err.Error()})
+				fmt.Println(err.Error())
 				break
 			}
+		}
+	}
+}
+
+func (handler *Handler) HandleDisconnect(ctx *gin.Context) {
+	email := ctx.Request.URL.Query()["email"][0]
+	delete(handler.SocketStore, email)
+	ctx.JSON(200, make(map[string]string))
+}
+
+func (handler *Handler) HandleSendMessage(ctx *gin.Context) {
+	var messageObj Message
+	err := json.NewDecoder(ctx.Request.Body).Decode(&messageObj)
+
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+	toEmail := messageObj.SentTo
+	sockets := handler.SocketStore
+	socket := sockets[toEmail]
+	fmt.Println("toEmail")
+	fmt.Println(toEmail)
+
+	// *********************************
+	// * TODO validate messageObj here.*
+	// *********************************
+
+
+	message, err := marshal(messageObj)
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+	fmt.Println("GOT HERE 11111")
+
+	keys := make([]string, len(handler.SocketStore))
+
+	i := 0
+	for k := range handler.SocketStore {
+			keys[i] = k
+			i++
+	}
+	fmt.Println(keys)
+
+	if socket != nil {
+		fmt.Println(message)
+		err = socket.Socket.WriteMessage(socket.Kind, message)
+		if err != nil {
+			fmt.Println(err.Error())
 		}
 	}
 }

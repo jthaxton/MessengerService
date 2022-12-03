@@ -1,20 +1,20 @@
 package main
 
 import (
-	// "log"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 )
 
 func main() {
 		r := gin.Default()
-		m := make(map[string]*websocket.Conn)
-		socketStore := SocketStore{Sockets: m}
-		handler := Handler{SocketStore: &socketStore}
+		r.UnescapePathValues = false
 
-		// r.POST("/create", )
-		r.GET("/ping", handler.HandlePing)
+		socketStore := make(map[string]*Socket)
+		
+		handler := Handler{SocketStore: socketStore}
+
 		r.GET("/connect", handler.HandleConnect)
+		r.POST("/disconnect", handler.HandleDisconnect)
+		r.POST("/send_message", handler.HandleSendMessage)
 		r.Run()
 }
